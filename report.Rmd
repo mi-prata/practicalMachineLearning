@@ -1,0 +1,124 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Miguel Prata"
+date: "18/05/2017"
+output: html_document
+---
+
+## Summary 
+
+The goal of this project is to analyze data collected from personal activity trackers in order to identify the performed activity using machine learning techniques. 
+Subjects were asked to perform a weight lifting exercise while wearing sensors on the forearm, arm, and belt. The dumbell also had a sensor. The test subjects performed the exercise in five different ways: 
+
+* exactly according to the specification (Class A),
+* throwing the elbows to the front (Class B),
+* lifting the dumbbell only halfway (Class C),
+* lowering the dumbbell only halfway (Class D),
+* and throwing the hips to the front (Class E).
+
+The original data was collected by E. Velloso et al., more information can be found in http://groupware.les.inf.puc-rio.br/har#ixzz4hQJaWpGI.
+
+To speed up the analysis parallel processing was enabled, according to instructions from https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md.
+
+## Data Cleaning
+
+After an initial inspection it became evident that the dataset required some cleaning and columns filled entirely with NA values or "" were removed. 
+After splitting the dataset (60% training, 40% testing) the best practices for data pre processing were followed:
+
+* Low variability of the predictors was checked for;
+* Highly correlated predictors were identified and removed;
+
+
+```{r,message = FALSE, warning=FALSE, cache=TRUE}
+library(parallel);
+library(doParallel);
+library(caret);
+library(dplyr);
+#Setup parallel processing
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+#Configure working directory
+#setwd('C:/Users/mprata/Desktop/8_Practical_Machine_Learning/project')
+setwd('/Users/miguelprata/Dropbox/Minhas/Coursera/Data Science Specialization/8 - Practical Machine Learning/Projecto')
+#Load data set
+data <- tbl_df(read.csv("pml-training.csv",stringsAsFactors=FALSE))
+#Remove first seven columns because they are junk - QED
+hold <- 1:7;
+data <- select(data,-hold)
+#Identify columns CONSISTING SOLELY of missing data:
+#Columns with NA or "" are flagged  with logical value TRUE and removed
+MISS <- sapply(data, function (x) any(is.na(x) | x == ""))
+holder <- !MISS
+myVariables <- names(MISS)[holder]
+data2 <- select(data,one_of(myVariables))
+#Convert "classe" column to factor
+data2$classe <- as.factor(data2$classe)
+#Split data into training and testing sets (60/40)
+set.seed(1991)
+trainIndex <- createDataPartition(data2$classe, 
+p = .6, list = FALSE,times = 1)
+dataTrain <- data2[trainIndex,]
+dataTest  <- data2[-trainIndex,]
+#Check for low variability features (there are no low variability features)
+variability <- nearZeroVar(data2)
+#Check for highly correlated features
+descrCorr <-  cor(select(dataTrain,-classe))
+highCorr <- findCorrelation(descrCorr, 0.90)
+#Highly correlated features found
+#Remove these features from the datasets
+dataTrain <- dataTrain[, -highCorr]
+dataTest  <- dataTest [, -highCorr]
+```
+
+This effectivly reduces the number of predictors in the dataset from 152 to 47. 
+
+## Analysis
+
+10-fold cross validation was setup and used in conjunction with:
+
+* trees;
+* random forests;
+* bagging;
+
+The trained models were applied to the test sets and its' accuracy assessed with the confusion matrix statistics. 
+
+```{r, message = FALSE, warning=FALSE,cache=TRUE}
+#Configure trainControl object to perform cross validation with 10 folds
+fitControl <- trainControl(method = "cv", 
+number = 10, allowParallel = TRUE)
+#Train tree algorithm
+system.time(tree <- train(classe ~ ., data = dataTrain, 
+            method = "rpart", trControl = fitControl))
+#Train random forest algorithm
+system.time(rf <- train(classe ~ ., data = dataTrain, 
+            method = "rf", trControl = fitControl))
+#Train boosting algorithm
+system.time(gbm <- train(classe ~ ., data = dataTrain,
+            method = "gbm", trControl = fitControl))
+#Predict on test dataset
+pred_tree <- predict(tree,dataTest)
+pred_rf <- predict(rf,dataTest)
+pred_gbm <- predict (gbm, dataTest)
+```
+
+```{r}
+#Generate Confusion Matrixes
+confusionMatrix(dataTest$classe,pred_tree)
+confusionMatrix(dataTest$classe,pred_rf)
+confusionMatrix(dataTest$classe,pred_gbm)
+```
+
+
+## Conclusion 
+
+Using random forests yielded the best results (estimated error rate smaller than 1%), as such this method was used to answer the Prediction Quiz. 
+
+```{r}
+dataQ <- tbl_df(read.csv("pml-testing.csv",stringsAsFactors=FALSE))
+results <- predict(rf,dataQ)
+results
+```
+
+
+
+
